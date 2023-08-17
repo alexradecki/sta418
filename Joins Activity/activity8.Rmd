@@ -1,0 +1,130 @@
+---
+title: "Joins Activity"
+author: "Alex Radecki"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    css: gvsu_readthedown_theme.css
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(skimr)
+```
+
+
+Importing data for activity
+```{r}
+# Importing R object
+michiganFlights <- read_rds("fullMiFlights2021.rds")
+```
+
+Extracting data sets from list object
+```{r}
+list2env(michiganFlights, envir = .GlobalEnv)
+```
+
+## Exploratory Data Analysis
+
+```{r}
+# Running glimpse function on each element of list using map() function from purrr package
+purrr::map(.x = michiganFlights, .f = glimpse)
+```
+
+```{r}
+skim(airlines)
+skim(airports)
+skim(flights)
+skim(planes)
+skim(weather)
+```
+
+
+**The `flights` and `planes` data set connect through which variable(s)?**
+
+The `tailnum` variable connects the 2 tables
+
+
+**The `flights` and `airports` data set connect through which variable(s)?**
+
+The `faa`, `origin`, and `dest` variables connect the 2 tables
+
+
+**The `flights` and `weather` data set connect through which variable(s)?**
+
+All of the common time variables (`year`, `month`, `day`, and `hour`), and the location (`origin`).
+
+
+**Suppose we wanted to draw (approximately) the route each plane flies from its origin to its destination. Which variables would we need? Which tables would we need to combine?**
+
+**Table(s)**:
+`flights` and `airports`
+
+
+**Variable(s)**:
+From `flights`, we would need `origin` and `dest`.
+From `airports`, we would need `lat` and `lon`.
+
+
+*Now suppose we wanted to explore typical weather patterns for departing flights at different airports and explore the weather’s relationship with departure delays. Considering the wind speeds and amount of precipitation, which variables would we need for this? Which tables would we need to combine?*
+
+**Table(s)**:
+`flights` and `weather`
+
+**Variable(s)**:
+From `flights` we would need dep_delay`.
+From `weather` we would need `wind_dir`, `wind_speed`, `wind_gust`, and `precip`.
+
+## Joins
+
+*Combine the airlines and flights data frames with left_join() to create a new data set called flightsCarriers.*
+```{r}
+# Combining airlines and flights data frames with left_join()
+flightsCarriers <- flights %>% left_join(airlines, by = c("carrier" = "carrier"))
+
+# Calculate the average flight distance for each carrier using the full name of the carriers. 
+flightsCarriers %>% group_by(name) %>%
+  summarize(AvgDistance = mean(distance, na.rm = TRUE)) %>%
+  arrange(AvgDistance)
+```
+
+*Combine the weather and flights data frames with left_join() to create a new data set called weatherFlights.*
+```{r}
+# Combining the weather and flights data frames with left_join()
+weatherFlights <- weather %>% left_join(flights)
+
+# Displays the number of rows weatherFlights has
+nrow(weatherFlights)
+```
+
+*Combine the flights and weather data frames with left_join() to create new data set called flightsWeather*
+```{r}
+flightsWeather <- flights %>% left_join(weather,
+                                        by = c("year", "month", "day", "origin", "hour"))
+
+# Displaying number of rows in data set
+nrow(flightsWeather)
+```
+
+*Combine the weather and flights data frames with full_join() to create a new data set called weatherFlightsFull.*
+```{r}
+weatherFlightsFull <- flights %>% full_join(weather)
+
+# Displaying number of rows in data set
+nrow(weatherFlightsFull)
+```
+
+*Considering all of the data we have available, how many flights have missing wind speeds?*
+```{r}
+flightsWeather %>% pull(wind_speed) %>% is.na() %>% sum()
+```
+
