@@ -1,0 +1,434 @@
+---
+title: "Final Project"
+author: "Alex Radecki"
+date: "`r paste0(lubridate::month(Sys.Date(), label = T, abbr = F), ' ',
+scales::ordinal(lubridate::day(Sys.Date())), ', ', lubridate::year(Sys.Date()))`"
+output:
+  rmdformats::material:
+    code_folding: hide
+---
+# Setup and Data Import
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(skimr)
+library(ggpubr)
+library(readr)
+library(flextable)
+library(dplyr)
+library(magrittr)
+library(gtrendsR)
+library(knitr)
+library(ggplot2)
+library(patchwork)
+library(sf)
+library(mapview)
+library(leaflet)
+```
+
+
+**Importing data into R**
+```{r}
+gunViolence <- read.csv("stage3.csv")
+```
+
+
+**Creating new variables**
+```{r}
+# Year
+gunViolence <- gunViolence %>% mutate(year = as.numeric(substr(date, 1, 4)))
+
+# Month
+gunViolence <- gunViolence %>% mutate(month = as.numeric(substr(date, 6, 7)))
+
+# Day
+gunViolence <- gunViolence %>% mutate(day = as.numeric(substr(date, 9, 10)))
+
+# Combined number of killed and injured
+gunViolence <- gunViolence %>% mutate(n_totalKilledInjured = n_killed + n_injured)
+
+# Creating variable representing whether incident resulted in injury, death, or both
+resultFun <- function(injured, killed) {
+  if(injured > 0 && killed < 1) {
+    return("Injury")
+  }
+  else if(injured < 1 && killed > 0) {
+    return("Death")
+  }
+  else if(injured > 0 && killed > 0) {
+    return("Injury and Death")
+  }
+  else {
+    return("No Injury or Death")
+  }
+}
+
+gunViolence <- gunViolence %>% mutate(incidentResult = mapply(resultFun, n_injured, n_killed))
+```
+
+
+**Changing full state name to abbreviation**
+```{r}
+library(qdap)
+
+gunViolence <- gunViolence %>% mutate(state = mgsub(state.name, state.abb, state))
+gunViolence <- gunViolence %>% mutate(state = str_to_upper(state))
+```
+
+**Creating data frame with corresponding month name and combining it with gun violence data set using left join**
+```{r}
+# Creating a table storing the month name for the corresponding month number
+month <- 1:12
+monthNames <- c("January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December")
+
+monthsAndNames <- tibble(month, monthNames)
+```
+
+```{r}
+gunViolenceMonthNames <- gunViolence %>% left_join(monthsAndNames, by = c("month" = "month"))
+```
+
+
+
+**Exploring high-level characteristics of data**
+```{r}
+glimpse(gunViolenceMonthNames)
+
+skim(gunViolenceMonthNames)
+```
+
+# ggplot Visualizations
+
+**Bar chart of the total number of gun violence deaths by state**
+```{r fig.align="center", echo = FALSE,fig.width = 14}
+gunViolence %>% ggplot(aes(x = fct_reorder(state, -n_killed, .fun = sum),
+                           y = n_killed)) +
+  geom_col() +
+  labs(title = "Number of Gun Violence Deaths by State (2013-2018)",
+       x = "State",
+       y = "Number of Deaths",
+       caption = "Data Source: Gun Violence Archive website.") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+
+**Bar chart of the total number of gun violence deaths by month**
+```{r fig.align="center", echo = FALSE,fig.width = 14}
+gunViolenceMonthNames %>% ggplot(aes(x = monthNames,
+                           y = n_killed)) +
+  geom_col() +
+  labs(title = "Number of Gun Violence Deaths by Month (2013-2018)",
+       x = "Month",
+       y = "Number of Deaths",
+       caption = "Data Source: Gun Violence Archive website.") +
+  # Months were out of order
+  scale_x_discrete(limits = c("January", "February", "March", "April", "May", "June",
+                              "July", "August", "September", "October", "November", "December")) +
+  theme_bw()
+```
+
+
+**Pie chart of the percentage of gun violence incidents resulting in injury, death, or both**
+```{r fig.align="center", echo = FALSE,fig.width = 14}
+library(scales)
+
+# Creating data frame with the count of each type of incident to use for our pie chart
+incidentResultDF <- gunViolence %>% count(incidentResult)
+
+incidentResultDF %>% ggplot(aes(x = "", y = n, fill=incidentResult)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  scale_fill_discrete(name = "Incident Result") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank()
+        )
+```
+
+**Scatter plot of the number of injured by the number killed per gun violence incident**
+```{r}
+gunViolence %>% ggplot(aes(x = n_injured,
+                           y = n_killed)) +
+  geom_point()
+```
+
+**Side by side boxplots of total number of deaths and injured per gun violence incident, by year. Outliers removed to help better visualize box plots**
+```{r}
+quartiles <- quantile(gunViolence$n_totalKilledInjured, probs = c(0.25, 0.75))
+IQR <- IQR(gunViolence$n_totalKilledInjured)
+
+lowerQuartile <- quartiles[1] - 1.5 * IQR
+upperQuartile <- quartiles[2] + 1.5 * IQR
+
+gunViolenceNoOutlier <- subset(gunViolence, gunViolence$n_totalKilledInjured > lowerQuartile &
+                                 gunViolence$n_totalKilledInjured < upperQuartile)
+```
+
+```{r}
+gunViolenceNoOutlier %>% ggplot(aes(x = year, y = n_totalKilledInjured,
+                         fill = year)) +
+  stat_boxplot(geom = "errorbar", width = 0.2, coef = 1.5) +
+  stat_boxplot(geom = "boxplot", width = 0.5, coef = 1.5,
+               outlier.shape = 8) +
+  stat_summary(fun = "mean", geom = "point", shape = 23, fill = "black",
+               color = "white") +
+  scale_fill_manual(values = c("#009E73", "#56B4E9")) +
+    coord_flip() +
+    labs(y = "Number of injured and killed per gun violence incident",
+         title = "Comparison of Gun Violence related Casualties by Year") +
+  theme(legend.position = "none")
+```
+After removing outliers, we can see that there is next to no difference between years in the number of injured and killed. 
+
+**Line graph showing the number of searches for "shootings" between 2013 and 2018 with a line plot of casualties per shooting by date for reference**
+```{r}
+gunViolence <- gunViolence %>% mutate(date = str_remove_all(date, "-"))
+
+shootingSearches <- gtrends(c("shooting"), time = "2013-01-01 2018-12-31", geo = "US")
+plot(shootingSearches)
+
+gunViolence %>% ggplot(aes(x = date,
+                           y = n_totalKilledInjured)) +
+  geom_line() +
+  scale_x_discrete(breaks = c("20130101", "20140101", "20150101",
+                              "20160101", "20170101", "20180101"))
+```
+
+**Leaflet map of total number of injured and killed per mass shooting incident**
+```{r}
+library(leaflet.extras)
+
+# Gun Violence Archive defines a mass shooting as four or more people shot or killed in a single incident
+massShooting <- gunViolence %>% filter(n_totalKilledInjured > 4, na.rm = TRUE) 
+
+massShooting %>% leaflet() %>%
+  addTiles() %>%
+  addCircles(lng = massShooting$longitude,
+             lat = massShooting$latitude,
+             weight = 7,
+             radius = massShooting$n_totalKilledInjured^2.5,
+             popup = massShooting$date)
+```
+
+
+
+
+# Summary Statistics
+
+**Mean and Standard Deviation of Deaths per Gun Violence Incident by Month**
+```{r}
+gunViolence %>% group_by(month) %>%
+  summarize(n = n(),
+            averageTotalKilledInjuredMonth = (mean(n_totalKilledInjured)),
+            totalSDMonth = sd(n_totalKilledInjured),
+            na.rm = TRUE)
+```
+
+
+**Mean and Standard Deviation of Deaths per Gun Violence Incident by Year**
+```{r}
+gunViolence %>% group_by(state) %>%
+  summarize(n = n(),
+            averageTotalKilledInjuredState = (mean(n_totalKilledInjured)),
+            totalSDState = sd(n_totalKilledInjured),
+            na.rm = TRUE)
+```
+
+
+# Monte Carlo Method
+
+**The total number of killed and injured somewhat resembles an exponential distribution. We will use Monte Carlo methods to find the expected number of deaths and injuries per gun violence incident as well as a 95% confidence interval.**
+```{r}
+shootings <- tibble(total = rexp(100000))
+
+shootings %>% ggplot(aes(x = total)) +
+  geom_histogram(color = "black", fill = "dodgerblue") +
+  labs(title = "Exponential Distribution: Gun Violence Injuries/Deaths",
+       x = "Total number of injured/killed per incident",
+       y = "Frequency") +
+  theme_bw()
+
+gunViolence %>% ggplot(aes(x = n_totalKilledInjured)) +
+  geom_histogram(color = "black", fill = "red") +
+  labs(title = "Gun Violence Injuries/Deaths",
+       x = "Total number of injured/killed per incident",
+       y = "Frequency") +
+  theme_bw()
+```
+
+```{r}
+# Expected total number of injuries/deaths and 95% confidence interval
+shootings %>% pull(total) %>% mean()
+
+lowerBound <- shootings %>% pull(total) %>% quantile(probs = 0.025)
+upperBound <- shootings %>% pull(total) %>% quantile(probs = 0.975)
+```
+We can see that our expected number of injuries/deaths per gun violence incident is `r shootings %>% pull(total) %>% mean()`, and we are 95% confident that the true mean is between  `r round(lowerBound, 2)` and  `r round(upperBound, 2)`.
+
+# Permutation Testing
+
+**We will use permutation testing to test whether there are an increased number of mass shooting incidents during the school year (Months 1-5, 9-12**
+```{r}
+# Creating function to determine whether month falls in school calendar
+isSchool <- function(month) {
+  if(month < 6 || month > 8) {
+    return("In school")
+  }
+  else {
+    return("Not in school")
+  }
+}
+
+# Adding variable to mass shooting data frame for school
+massShooting <- massShooting %>% mutate(school = mapply(isSchool, month))
+```
+
+```{r}
+# Two-sample t-test
+tResult <- t.test(x = massShooting$n_totalKilledInjured[which(massShooting$school == "In school")],
+                  y = massShooting$n_totalKilledInjured[which(massShooting$school == "Not in school")],
+                  alternative = "less")
+
+```
+
+As the normality assumption for the 2 sample t-test is not met, we will use the permutation procedure to compare the 2 groups.
+```{r}
+n1 <- 10
+n2 <- 10
+
+# Generating all permutations
+perms <- combn(1:(n1 + n2), m = n1)
+
+# Calculating number of permutations
+nperms <- choose(n1 + n2, n1)
+
+# Instantiating vector for test statistics
+permTs <- vector(length = nperms)
+
+# Calculating t-test statistic for each permutation
+for(p in 1:nperms) {
+  permTs[p] <- t.test(x = massShooting$n_totalKilledInjured[perms[, p]], 
+                      y = massShooting$n_totalKilledInjured[-c(perms[, p])])$statistic
+}
+```
+
+```{r}
+# Creating a histogram for our null distribution
+tibble(t = permTs) %>% ggplot(aes(x = t)) +
+  geom_histogram(color = "white") +
+  
+# Vertical lines indicate where the 5th percentile is (a red dotted line), and where our observed test statistic is (solid blue line).
+  geom_vline(xintercept = quantile(permTs, probs = 0.05),
+             color = "red", linetype = "dotted") +
+  geom_vline(xintercept = tResult$statistic,
+             color = "blue", linetype = "solid") +
+  labs(title = "Permutation Null Distribution",
+       y = "Frequency") +
+  theme_bw()
+```
+
+```{r}
+permPvalue <- mean(permTs <= tResult$statistic)
+```
+
+Since the p-value of `r permPvalue` is greater than 0.05, we fail to reject the null hypothesis; That is, we lack sufficient evidence to say that there is a difference in number of killed and injured from gun violence incidents during and out of the school year. 
+
+
+# Bootstrapping
+
+```{r}
+# Number of bootstrap samples
+n <- 30
+B <- 10000
+
+# Instantiating matrix for bootstrap samples
+boots <- matrix(NA, nrow = n, ncol = B)
+
+# Sampling with replacement B times
+for(b in 1:B) {
+  boots[, b] <- gunViolence$n_totalKilledInjured[sample(1:n, size = n, replace = TRUE)]
+}
+```
+
+```{r}
+# Creating distribution of bootstrap medians
+bootMedians <- vector(length = B)
+
+for(b in 1:B) {
+  bootMedians[b] <- median(boots[, b])
+}
+```
+
+```{r}
+# Estimating standard error of bootstrap medians
+SEestimate <- sd(bootMedians)
+SEestimate
+
+# Nonparametric 95% confidence interval for population median
+lowerBoundMed <- quantile(bootMedians, probs = 0.025)
+upperBoundMed <- quantile(bootMedians, probs = 0.975)
+```
+Using bootstrapping, we can see that our estimate for the standard error of the population (All gun violence incidents) is `r round(SEestimate, 3)` and we are 95% confident that the total number of individuals killed and injured in a gun violence incident is between `r round(lowerBoundMed, 2)` and `r round(upperBoundMed, 2)`. This is notably a much smaller interval than the one we found using the Monte Carlo method.
+
+# Data Dictionary
+
+```{r}
+# Creating data dictionary. 
+dataDictionary <- tibble(Variable = colnames(gunViolence),
+                         Description = c("gunviolencearchive.org ID for incident",
+                                         "date of occurrence",
+                                         "state",
+                                         "city or county",
+                                         "address where incident took place",
+                                         "number of people killed",
+                                         "number of people injured",
+                                         "link to gunviolencearchive.org webpage containing details of incident",
+                                         "link to online news story concerning incident",
+                                         "ignore, always False",
+                                         "Congressional district",
+                                         "gun stolen or not, e.g. 'Unknown' or 'Stolen'",
+                                         "description of gun type",
+                                         "list of incident characteristics",
+                                         "latitude of location",
+                                         "description of location where incident took place",
+                                         "longitude of location",
+                                         "number of guns involved",
+                                         "additional notes about the incident",
+                                         "participant age",
+                                         "participant description of age group, e.g. 'Adult 18+'",
+                                         "participant gender being 'Male' or 'Female'",
+                                         "participant name",
+                                         "relationship of participant to other participants",
+                                         "outcome, one of 'Arrested', 'Killed', 'Injured', or 'Unharmed'",
+                                         "participant category being 'Victim' or 'Subject-Suspect'",
+                                         "links to online news stories concerning incident",
+                                         "state house district",
+                                         "state senate district",
+                                         "year incident occurred",
+                                         "month incident occurred",
+                                         "day incident occurred",
+                                         "total number of people injured and killed",
+                                         "result of incident, 'Injury', 'Injury and Death', 'Death', and 'No injury or death'"),
+                         Type = map_chr(gunViolence, .f = function(x){typeof(x)[1]}),
+                         Class = map_chr(gunViolence, .f = function(x){class(x)[1]}))
+```
+
+```{r}
+flextable::flextable(dataDictionary, cwidth = 2)
+```
+
